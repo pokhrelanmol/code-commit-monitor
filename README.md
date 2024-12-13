@@ -26,8 +26,6 @@ A simple tool for security researchers to monitor code-changes that silently fix
 
 ## Installation
 
-### Using: go install
-
 Make sure you have Go installed on your system.
 
 Clone the repository and build manually:
