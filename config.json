@@ -1,0 +1,9 @@
+{
+  "snippets": [
+  ],
+  "discord": {
+    "template": "Changes detected!\n\n**Company**: {{.Company}}\n{{if .Note}}\n**Note**: {{.Note}}\n{{end}}\n**File**: {{.URL}}\n\n**Original Code**:\n```javascript\n{{.Content}}\n```",
+    "username": "GitHub Monitor",
+    "avatar_url": "https://i.ibb.co/JH5GnN3/Unknown-8.jpg"
+  }
+}
