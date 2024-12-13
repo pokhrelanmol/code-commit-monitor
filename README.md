@@ -138,6 +138,11 @@ Add a job:
 
 This runs the tool daily at midnight.
 
+We recommend logging the output of the last run as a good practice.
+```bash
+0 0 * * * /path/to/csm --webhook "https://discord.com/api/webhooks/your-webhook-url" > /path/to/log/file
+```
+
 Ensure the tool has execution permissions:
 
 ```bash
