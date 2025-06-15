@@ -280,6 +280,32 @@ func fetchLatestCommits(owner, repo, branch string) ([]GitHubCommit, error) {
 	return commits, nil
 }
 
+// sendTestMessage sends a test message to Discord
+func sendTestMessage(webhookURL string) error {
+	webhook := DiscordWebhook{
+		Username:  "CSM Test Bot",
+		Content:   "🎉 **Hello Boy!**\n\nThis is a test message from your CSM Commit Monitor!\n\n✅ GitHub Actions is working correctly\n✅ Discord webhook is connected\n✅ Your monitoring system is ready!\n\n*Test sent at: " + time.Now().Format("2006-01-02 15:04:05 UTC") + "*",
+		AvatarURL: "https://i.ibb.co/JH5GnN3/Unknown-8.jpg",
+	}
+
+	payload, err := json.Marshal(webhook)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 && resp.StatusCode != 204 {
+		return fmt.Errorf("discord webhook returned status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 // addRepository adds a new GitHub repository to monitor
 func addRepository(url string, note string) error {
 	// Load existing configuration
@@ -440,6 +466,7 @@ func main() {
 	removeFlag := flag.String("remove", "", "Remove a GitHub repository URL from monitoring")
 	webhookFlag := flag.String("webhook", "", "Check for new commits using a Discord webhook URL to receive notifications.")
 	noteFlag := flag.String("note", "", "(Optional) Note explaining what is being monitored. Must be used with --add")
+	testFlag := flag.Bool("test", false, "Send a test message to Discord webhook")
 	version := flag.Bool("version", false, "Show the version of the tool")
 	flag.Parse()
 
@@ -469,7 +496,23 @@ func main() {
 		fmt.Println("Repository removed successfully")
 	}
 
-	// If no add/remove flags, require webhook for checking commits
+	// Handle test command
+	if *testFlag {
+		if *webhookFlag == "" {
+			fmt.Println("Error: --webhook flag is required for testing")
+			fmt.Println("Usage: csm --test --webhook <discord_webhook_url>")
+			os.Exit(1)
+		}
+		fmt.Println("Sending test message...")
+		if err := sendTestMessage(*webhookFlag); err != nil {
+			fmt.Printf("Error sending test message: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✅ Test message sent successfully!")
+		return
+	}
+
+	// If no add/remove/test flags, require webhook for checking commits
 	if *addFlag == "" && *removeFlag == "" {
 		if *webhookFlag == "" {
 			fmt.Println("Error: --webhook flag is required when checking for commits")

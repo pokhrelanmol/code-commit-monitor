@@ -1,0 +1,29 @@
+name: CSM Test Mode
+
+on:
+  schedule:
+    # Run every minute for testing (GitHub Actions minimum is 5 minutes, so this will run every 5 minutes)
+    - cron: "* * * * *"
+  workflow_dispatch: # Allow manual triggering for instant testing
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.23"
+
+      - name: Build CSM
+        run: go build -o csm
+
+      - name: Send test message
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          ./csm --test --webhook "$DISCORD_WEBHOOK"
