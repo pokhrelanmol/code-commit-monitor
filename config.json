@@ -1,12 +1,12 @@
 {
   "repositories": [
     {
-      "url": "https://github.com/pokhrelanmol/spectral-poc",
-      "owner": "pokhrelanmol",
-      "repo": "spectral-poc",
+      "url": "https://github.com/flare-foundation/fassets",
+      "owner": "flare-foundation",
+      "repo": "fassets",
       "branch": "main",
-      "last_commit": "12d64fc87a5d250f1e2cb8d6e71e88f572587bd4",
-      "note": "Testing CSM commit monitoring with personal repository - will show commit title, message, and link"
+      "last_commit": "bd63b3ecd9185adcf6affefc29eeca4f9eb562e4",
+      "note": "Monitoring Flare Foundation FAssets repository for smart contract and security changes - running every 2 hours"
     }
   ],
   "discord": {
