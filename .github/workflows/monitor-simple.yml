@@ -1,13 +1,10 @@
-name: CSM Commit Monitor
+name: CSM Commit Monitor (Simple)
 
 on:
   schedule:
     # Run every 15 minutes
     - cron: "*/15 * * * *"
   workflow_dispatch: # Allow manual triggering
-
-permissions:
-  contents: write # Allow pushing commits back to repo
 
 jobs:
   monitor:
@@ -31,12 +28,6 @@ jobs:
         run: |
           ./csm --webhook "$DISCORD_WEBHOOK"
 
-      - name: Commit config changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add config.json
-          git diff --staged --quiet || git commit -m "Update last commit tracking [skip ci]"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # Note: This version doesn't save tracking data back to repo
+    # Each run will check against the config.json baseline
+    # If you want persistent tracking, use the main monitor.yml instead

@@ -6,6 +6,9 @@ on:
     - cron: "* * * * *"
   workflow_dispatch: # Allow manual triggering for instant testing
 
+permissions:
+  contents: write # Allow pushing commits back to repo (not needed for test, but keeping consistent)
+
 jobs:
   test:
     runs-on: ubuntu-latest
