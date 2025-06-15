@@ -1,9 +1,17 @@
 {
-  "snippets": [
+  "repositories": [
+    {
+      "url": "https://github.com/flare-foundation/fassets",
+      "owner": "flare-foundation",
+      "repo": "fassets",
+      "branch": "main",
+      "last_commit": "bd63b3ecd9185adcf6affefc29eeca4f9eb562e4",
+      "note": "Monitoring Flare Foundation FAssets repository for smart contract and security changes"
+    }
   ],
   "discord": {
-    "template": "Changes detected!\n\n**Company**: {{.Company}}\n{{if .Note}}\n**Note**: {{.Note}}\n{{end}}\n**File**: {{.URL}}\n\n**Original Code**:\n```javascript\n{{.Content}}\n```",
-    "username": "GitHub Monitor",
+    "template": "🚨 **New Commits Detected!**\n\n**Repository**: {{.Owner}}/{{.Repo}}\n**Branch**: {{.Branch}}\n{{if .Note}}**Note**: {{.Note}}{{end}}\n**Repository URL**: {{.URL}}\n\n**New Commits**:\n{{.Content}}\n\n*Monitored by CSM - Commit Monitor*",
+    "username": "CSM Commit Monitor",
     "avatar_url": "https://i.ibb.co/JH5GnN3/Unknown-8.jpg"
   }
 }

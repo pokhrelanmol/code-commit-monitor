@@ -1,4 +1,4 @@
-// Package main provides a command-line tool for monitoring changes in GitHub code snippets
+// Package main provides a command-line tool for monitoring GitHub repository commits
 package main
 
 // Required imports for the application
@@ -10,23 +10,26 @@ import (
 	"io"            // For basic I/O interfaces
 	"net/http"      // For making HTTP requests to GitHub
 	"os"            // For file and system operations
-	"regexp"        // For parsing line numbers from URLs
+	"regexp"        // For parsing repository URLs
 	"strings"       // For string manipulation operations
 	"text/template"
+	"time"
 )
 
-// CodeSnippet represents a monitored code segment from GitHub
-type CodeSnippet struct {
-	URL     string   `json:"url"`     // The full GitHub URL of the code snippet
-	Company string   `json:"company"` // The name of the company being monitored
-	Content []string `json:"content"` // The lines of code being monitored
-	Note    string   `json:"note"`    // Optional note explaining what is being monitored
+// Repository represents a monitored GitHub repository
+type Repository struct {
+	URL        string `json:"url"`         // The GitHub repository URL
+	Owner      string `json:"owner"`       // Repository owner/organization
+	Repo       string `json:"repo"`        // Repository name
+	Branch     string `json:"branch"`      // Branch to monitor (default: main)
+	LastCommit string `json:"last_commit"` // Last known commit SHA
+	Note       string `json:"note"`        // Optional note explaining what is being monitored
 }
 
 // Config represents the application's configuration
 type Config struct {
-	Snippets []CodeSnippet `json:"snippets"`
-	Discord  struct {
+	Repositories []Repository `json:"repositories"`
+	Discord      struct {
 		Template  string `json:"template"`
 		Username  string `json:"username"`
 		AvatarURL string `json:"avatar_url"`
@@ -43,6 +46,19 @@ type DiscordWebhook struct {
 	AvatarURL string `json:"avatar_url"`
 }
 
+// GitHubCommit represents a commit from GitHub API
+type GitHubCommit struct {
+	SHA    string `json:"sha"`
+	Commit struct {
+		Author struct {
+			Name  string    `json:"name"`
+			Date  time.Time `json:"date"`
+		} `json:"author"`
+		Message string `json:"message"`
+	} `json:"commit"`
+	HTMLURL string `json:"html_url"`
+}
+
 // Default Discord webhook template
 func getDefaultDiscordConfig() struct {
 	Template  string
@@ -54,26 +70,24 @@ func getDefaultDiscordConfig() struct {
 		Username  string
 		AvatarURL string
 	}{
-		Template: `Changes detected!
+		Template: `🚨 **New Commits Detected!**
 
-**Company**: {{.Company}}
-{{if .Note}}
-**Note**: {{.Note}}
-{{end}}
-**File**: {{.URL}}
+**Repository**: {{.Owner}}/{{.Repo}}
+**Branch**: {{.Branch}}
+{{if .Note}}**Note**: {{.Note}}{{end}}
+**Repository URL**: {{.URL}}
 
-**Original Code**:
-` + "```" + `javascript
+**New Commits**:
 {{.Content}}
-` + "```" + `
-`,
-		Username:  "csm",
+
+*Monitored by CSM - Commit Monitor*`,
+		Username:  "CSM Commit Monitor", 
 		AvatarURL: "https://i.ibb.co/JH5GnN3/Unknown-8.jpg",
 	}
 }
 
-// sendDiscordNotification sends a notification about detected changes
-func sendDiscordNotification(webhookURL string, snippet CodeSnippet, discordConfig struct {
+// sendDiscordNotification sends a notification about detected commits
+func sendDiscordNotification(webhookURL string, repo Repository, commits []GitHubCommit, discordConfig struct {
 	Template  string
 	Username  string
 	AvatarURL string
@@ -86,18 +100,33 @@ func sendDiscordNotification(webhookURL string, snippet CodeSnippet, discordConf
 
 	// Create template data structure
 	type TemplateData struct {
-		Company string
+		Owner   string
+		Repo    string
+		Branch  string
 		Note    string
 		URL     string
 		Content string
 	}
 
+	// Format commits for display
+	var commitStrings []string
+	for _, commit := range commits {
+		commitStr := fmt.Sprintf("• **%s** by %s\n  %s\n  [View Commit](%s)",
+			commit.SHA[:8],
+			commit.Commit.Author.Name,
+			strings.Split(commit.Commit.Message, "\n")[0], // First line of commit message
+			commit.HTMLURL)
+		commitStrings = append(commitStrings, commitStr)
+	}
+
 	// Prepare template data
 	data := TemplateData{
-		Company: snippet.Company,
-		Note:    snippet.Note,
-		URL:     snippet.URL,
-		Content: strings.Join(snippet.Content, "\n"),
+		Owner:   repo.Owner,
+		Repo:    repo.Repo,
+		Branch:  repo.Branch,
+		Note:    repo.Note,
+		URL:     repo.URL,
+		Content: strings.Join(commitStrings, "\n\n"),
 	}
 
 	// Parse and execute template
@@ -195,58 +224,64 @@ func saveConfig(config Config) error {
 	return os.WriteFile(configFile, data, 0644)
 }
 
-// parseGithubURL extracts the raw content URL and line numbers from a GitHub URL
-// Returns the raw URL, start line, end line, and any error encountered
-func parseGithubURL(url string) (string, int, int, error) {
-	// Regular expression to extract line numbers from URL fragment
-	re := regexp.MustCompile(`#L(\d+)-L(\d+)`)
+// parseGithubRepoURL extracts owner, repo, and branch from a GitHub repository URL
+func parseGithubRepoURL(url string) (string, string, string, error) {
+	// Handle different GitHub URL formats
+	// https://github.com/owner/repo
+	// https://github.com/owner/repo/tree/branch
+	
+	// Remove trailing slash and normalize
+	url = strings.TrimSuffix(url, "/")
+	
+	// Regex to match GitHub repository URLs
+	re := regexp.MustCompile(`github\.com/([^/]+)/([^/]+)(?:/tree/([^/]+))?`)
 	matches := re.FindStringSubmatch(url)
+	
 	if matches == nil {
-		return "", 0, 0, fmt.Errorf("Invalid URL format: must contain line numbers (e.g., #L52-L64)")
+		return "", "", "", fmt.Errorf("invalid GitHub repository URL format")
 	}
-
-	// Convert GitHub web URL to raw content URL
-	rawURL := strings.Replace(url, "github.com", "raw.githubusercontent.com", 1)
-	rawURL = strings.Replace(rawURL, "/blob/", "/", 1)
-	rawURL = strings.Split(rawURL, "#")[0]
-
-	// Parse line numbers from regex matches
-	startLine, endLine := 0, 0
-	fmt.Sscanf(matches[1], "%d", &startLine)
-	fmt.Sscanf(matches[2], "%d", &endLine)
-
-	return rawURL, startLine, endLine, nil
+	
+	owner := matches[1]
+	repo := matches[2]
+	branch := "main" // default branch
+	
+	if len(matches) > 3 && matches[3] != "" {
+		branch = matches[3]
+	}
+	
+	return owner, repo, branch, nil
 }
 
-// fetchCodeContent retrieves the specified lines from a raw GitHub URL
-// Returns the lines of code between startLine and endLine (inclusive)
-func fetchCodeContent(rawURL string, startLine, endLine int) ([]string, error) {
-	// Fetch file content from GitHub
-	resp, err := http.Get(rawURL)
+// fetchLatestCommits retrieves the latest commits from a GitHub repository
+func fetchLatestCommits(owner, repo, branch string) ([]GitHubCommit, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits?sha=%s&per_page=10", owner, repo, branch)
+	
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error fetching commits: %v", err)
 	}
 	defer resp.Body.Close()
-
-	// Read the entire response body
-	content, err := io.ReadAll(resp.Body)
+	
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("GitHub API returned status: %d", resp.StatusCode)
+	}
+	
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading response: %v", err)
 	}
-
-	// Split content into lines and validate line numbers
-	lines := strings.Split(string(content), "\n")
-	if startLine > len(lines) || endLine > len(lines) || startLine < 1 || endLine < 2 {
-		return nil, fmt.Errorf("line numbers out of range. start line must be > 0 and end line must be > 1")
+	
+	var commits []GitHubCommit
+	err = json.Unmarshal(body, &commits)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing commits: %v", err)
 	}
-
-	// Extract and return the requested lines
-	return lines[startLine-1 : endLine], nil
+	
+	return commits, nil
 }
 
-// addURL adds a new GitHub URL to the monitored snippets
-// It fetches the current content and saves it to the configuration
-func addURL(url string, note string) error {
+// addRepository adds a new GitHub repository to monitor
+func addRepository(url string, note string) error {
 	// Load existing configuration
 	config, err := loadConfig()
 	if err != nil {
@@ -254,48 +289,44 @@ func addURL(url string, note string) error {
 	}
 
 	// Check for duplicate URLs
-	for _, snippet := range config.Snippets {
-		if snippet.URL == url {
-			return fmt.Errorf("URL already being monitored")
+	for _, repo := range config.Repositories {
+		if repo.URL == url {
+			return fmt.Errorf("repository already being monitored")
 		}
 	}
 
 	// Parse and validate the GitHub URL
-	rawURL, startLine, endLine, err := parseGithubURL(url)
+	owner, repo, branch, err := parseGithubRepoURL(url)
 	if err != nil {
 		return err
 	}
 
-	// Fetch the initial content
-	content, err := fetchCodeContent(rawURL, startLine, endLine)
+	// Fetch latest commits to verify repository exists and get initial commit
+	commits, err := fetchLatestCommits(owner, repo, branch)
 	if err != nil {
 		return err
 	}
-
-	company, err := extractCompanyName(url)
-	if err != nil {
-		return err
+	
+	if len(commits) == 0 {
+		return fmt.Errorf("no commits found in repository")
 	}
 
-	// Add new snippet to configuration
-	config.Snippets = append(config.Snippets, CodeSnippet{
-		URL:     url,
-		Company: company,
-		Content: content,
-		Note:    note,
+	// Add new repository to configuration
+	config.Repositories = append(config.Repositories, Repository{
+		URL:        url,
+		Owner:      owner,
+		Repo:       repo,
+		Branch:     branch,
+		LastCommit: commits[0].SHA, // Store the latest commit SHA
+		Note:       note,
 	})
 
 	// Save updated configuration
 	return saveConfig(config)
 }
 
-func extractCompanyName(githubURL string) (string, error) {
-	name := strings.Split(strings.Split(githubURL, "github.com/")[1], "/")[0]
-	return name, nil
-}
-
-// removeURL removes a GitHub URL from the monitored snippets
-func removeURL(url string) error {
+// removeRepository removes a GitHub repository from monitoring
+func removeRepository(url string) error {
 	// Load existing configuration
 	config, err := loadConfig()
 	if err != nil {
@@ -303,11 +334,11 @@ func removeURL(url string) error {
 	}
 
 	// Create new slice excluding the specified URL
-	newSnippets := []CodeSnippet{}
+	newRepos := []Repository{}
 	found := false
-	for _, snippet := range config.Snippets {
-		if snippet.URL != url {
-			newSnippets = append(newSnippets, snippet)
+	for _, repo := range config.Repositories {
+		if repo.URL != url {
+			newRepos = append(newRepos, repo)
 		} else {
 			found = true
 		}
@@ -315,64 +346,40 @@ func removeURL(url string) error {
 
 	// Return error if URL wasn't found
 	if !found {
-		return fmt.Errorf("URL not found in monitored list")
+		return fmt.Errorf("repository not found in monitored list")
 	}
 
 	// Update and save configuration
-	config.Snippets = newSnippets
+	config.Repositories = newRepos
 	return saveConfig(config)
 }
 
-// checkCodeExistence verifies if a saved code snippet still exists in the current file content
-// Returns true if the snippet is found, false otherwise
-func checkCodeExistence(snippet CodeSnippet) (bool, error) {
-	// Get raw URL for content fetching
-	rawURL, _, _, err := parseGithubURL(snippet.URL)
+// checkForNewCommits checks if there are new commits in a repository
+func checkForNewCommits(repo Repository) ([]GitHubCommit, error) {
+	// Fetch latest commits
+	commits, err := fetchLatestCommits(repo.Owner, repo.Repo, repo.Branch)
 	if err != nil {
-		return false, fmt.Errorf("error parsing URL: %v", err)
+		return nil, err
 	}
-
-	// Fetch current content from GitHub
-	resp, err := http.Get(rawURL)
-	if err != nil {
-		return false, fmt.Errorf("error fetching content: %v", err)
+	
+	if len(commits) == 0 {
+		return nil, nil
 	}
-	defer resp.Body.Close()
-
-	// Read response body
-	content, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, fmt.Errorf("error reading content: %v", err)
+	
+	// Find new commits (commits that came after the last known commit)
+	var newCommits []GitHubCommit
+	for _, commit := range commits {
+		if commit.SHA == repo.LastCommit {
+			break // Found the last known commit, stop here
+		}
+		newCommits = append(newCommits, commit)
 	}
-
-	// Prepare saved snippet and current content for comparison
-	savedSnippet := strings.Join(snippet.Content, "\n")
-	currentContent := string(content)
-
-	// Normalize line endings
-	savedSnippet = strings.ReplaceAll(savedSnippet, "\r\n", "\n")
-	currentContent = strings.ReplaceAll(currentContent, "\r\n", "\n")
-
-	// Normalize whitespace in saved snippet
-	savedLines := strings.Split(savedSnippet, "\n")
-	for i, line := range savedLines {
-		savedLines[i] = strings.TrimSpace(line)
-	}
-	savedSnippet = strings.Join(savedLines, "\n")
-
-	// Normalize whitespace in current content
-	currentLines := strings.Split(currentContent, "\n")
-	for i, line := range currentLines {
-		currentLines[i] = strings.TrimSpace(line)
-	}
-	currentContent = strings.Join(currentLines, "\n")
-
-	// Check if normalized snippet exists in normalized content
-	return strings.Contains(currentContent, savedSnippet), nil
+	
+	return newCommits, nil
 }
 
-// checkChanges checks all monitored snippets for changes
-func checkChanges(webhookURL string) {
+// checkRepositories checks all monitored repositories for new commits
+func checkRepositories(webhookURL string) {
 	// Load configuration
 	config, err := loadConfig()
 	if err != nil {
@@ -380,26 +387,28 @@ func checkChanges(webhookURL string) {
 		return
 	}
 
-	if len(config.Snippets) == 0 {
-		fmt.Println("No snippets to monitor")
+	if len(config.Repositories) == 0 {
+		fmt.Println("No repositories to monitor")
 		return
 	}
 
-	// Check each snippet for changes
-	for _, snippet := range config.Snippets {
-		unchanged, err := checkCodeExistence(snippet)
+	// Check each repository for new commits
+	for i, repo := range config.Repositories {
+		fmt.Printf("Checking repository: %s/%s\n", repo.Owner, repo.Repo)
+		
+		newCommits, err := checkForNewCommits(repo)
 		if err != nil {
-			fmt.Printf("Error fetching content for %s: %v\n", snippet.URL, err)
+			fmt.Printf("Error checking commits for %s/%s: %v\n", repo.Owner, repo.Repo, err)
 			continue
 		}
 
-		if unchanged {
-			fmt.Printf("No changes detected for %s\n", snippet.URL)
+		if len(newCommits) == 0 {
+			fmt.Printf("No new commits found for %s/%s\n", repo.Owner, repo.Repo)
 		} else {
-			fmt.Printf("Changes detected for %s\n", snippet.URL)
+			fmt.Printf("Found %d new commit(s) for %s/%s\n", len(newCommits), repo.Owner, repo.Repo)
 
-			// Send notification using the settings from config
-			if err := sendDiscordNotification(webhookURL, snippet, struct {
+			// Send notification
+			if err := sendDiscordNotification(webhookURL, repo, newCommits, struct {
 				Template  string
 				Username  string
 				AvatarURL string
@@ -409,57 +418,65 @@ func checkChanges(webhookURL string) {
 				AvatarURL: config.Discord.AvatarURL,
 			}); err != nil {
 				fmt.Printf("Error sending notification: %v\n", err)
+			} else {
+				fmt.Printf("Notification sent for %s/%s\n", repo.Owner, repo.Repo)
 			}
 
-			removeURL(snippet.URL)
+			// Update the last known commit SHA
+			config.Repositories[i].LastCommit = newCommits[0].SHA
 		}
+	}
+	
+	// Save updated configuration with new commit SHAs
+	if err := saveConfig(config); err != nil {
+		fmt.Printf("Error saving config: %v\n", err)
 	}
 }
 
 // main is the entry point of the application
 func main() {
 	// Define command-line flags
-	addFlag := flag.String("add", "", "Add a GitHub URL to monitor")
-	removeFlag := flag.String("remove", "", "Remove a GitHub URL from monitoring")
-	webhookFlag := flag.String("webhook", "", "Check for code changes using a Discord webhook URL to receive notifications.")
+	addFlag := flag.String("add", "", "Add a GitHub repository URL to monitor")
+	removeFlag := flag.String("remove", "", "Remove a GitHub repository URL from monitoring")
+	webhookFlag := flag.String("webhook", "", "Check for new commits using a Discord webhook URL to receive notifications.")
 	noteFlag := flag.String("note", "", "(Optional) Note explaining what is being monitored. Must be used with --add")
 	version := flag.Bool("version", false, "Show the version of the tool")
 	flag.Parse()
 
 	if *version {
-		fmt.Println("0.1.0")
+		fmt.Println("CSM Commit Monitor v1.0.0")
 		os.Exit(0)
 	}
 
-	// Handle add URL command
+	// Handle add repository command
 	if *addFlag != "" {
-		if err := addURL(*addFlag, *noteFlag); err != nil {
-			fmt.Printf("Error adding URL: %v\n", err)
+		if err := addRepository(*addFlag, *noteFlag); err != nil {
+			fmt.Printf("Error adding repository: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("URL added successfully")
+		fmt.Println("Repository added successfully")
 		if *noteFlag != "" {
 			fmt.Printf("Note added: %s\n", *noteFlag)
 		}
 	}
 
-	// Handle remove URL command
+	// Handle remove repository command
 	if *removeFlag != "" {
-		if err := removeURL(*removeFlag); err != nil {
-			fmt.Printf("Error removing URL: %v\n", err)
+		if err := removeRepository(*removeFlag); err != nil {
+			fmt.Printf("Error removing repository: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("URL removed successfully")
+		fmt.Println("Repository removed successfully")
 	}
 
-	// If no add/remove flags, require webhook for checking changes
+	// If no add/remove flags, require webhook for checking commits
 	if *addFlag == "" && *removeFlag == "" {
 		if *webhookFlag == "" {
-			fmt.Println("Error: --webhook flag is required when checking for changes")
-			fmt.Println("Usage: tool --webhook <discord_webhook_url>")
+			fmt.Println("Error: --webhook flag is required when checking for commits")
+			fmt.Println("Usage: csm --webhook <discord_webhook_url>")
 			os.Exit(1)
 		}
-		// Call checkChanges with the webhook URL
-		checkChanges(*webhookFlag)
+		// Call checkRepositories with the webhook URL
+		checkRepositories(*webhookFlag)
 	}
 }
